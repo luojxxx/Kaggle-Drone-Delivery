@@ -271,7 +271,8 @@ sim.writeout_history()
 # write validator to find optimized parameters or just use total drone commands as proxy
 
 # optimize globally across multiple orders
-# group some orders together (to reduce computational load), 
+# group some orders together such as running 20 pending orders (to reduce computational load), 
 ## calculate best single route to maximize score with available drone, 
 ## calculate next best route, etc
+## maximum score is moving most product with shortest distance
 # demand distribution map should match supply distribution map
