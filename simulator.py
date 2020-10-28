@@ -274,5 +274,12 @@ sim.writeout_history()
 # group some orders together such as running 20 pending orders (to reduce computational load), 
 ## calculate best single route to maximize score with available drone, 
 ## calculate next best route, etc
-## maximum score is moving most product with shortest distance
+## maximum score is moving most product with shortest distances
+## need to balance the warehouse spread with delivery spread
+## represent items as array of id-item-order
+## identify cluster between nodes using stochasitic method, nodes are id-item-orders
+### find distance between random point and id-item-orders
+### sorting id-item-orders by distance, add up to weight limit
+### pick maximum weight limit among points, this is the cluster
+## once cluster and items are found, find minimum warehouse visits for drone
 # demand distribution map should match supply distribution map
