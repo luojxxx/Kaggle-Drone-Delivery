@@ -267,12 +267,11 @@ sim.writeout_history()
 # find closest warehouses to the order products, then bundle, then drones
 # do short easy orders first
 # packing efficency
-### globally bundle orders based on packing efficency
-### bundle multiple short orders into one drone and make multiple deliveries
-### order in which the warehouses are visited per bundle ending towards order's coordinates
-#### write validator to find optimized parameters
-##### global optimizations prioritizing short distances
-### group orders together, pick best single route to maximize score
-# sort orders by products proximity
-# demand distribution map of each product from orders
-# should match supply distribution of each product from warehouses
+# order in which the warehouses are visited per bundle ending towards order's coordinates
+# write validator to find optimized parameters or just use total drone commands as proxy
+
+# optimize globally across multiple orders
+# group some orders together (to reduce computational load), 
+## calculate best single route to maximize score with available drone, 
+## calculate next best route, etc
+# demand distribution map should match supply distribution map
