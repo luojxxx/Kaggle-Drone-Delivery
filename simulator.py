@@ -278,8 +278,13 @@ sim.writeout_history()
 ## need to balance the warehouse spread with delivery spread
 ## represent items as array of id-item-order
 ## identify cluster between nodes using stochasitic method, nodes are id-item-orders
-### find distance between random point and id-item-orders
-### sorting id-item-orders by distance, add up to weight limit
-### pick maximum weight limit among points, this is the cluster
+### find minimal distance between random point and id-item-orders
+### sorting id-item-orders by distance, add items up to weight limit. 
+### calculate average distance of added items
+### pick maximum payload_weight/average_distance among random points
+### the selected items around this point is the cluster
 ## once cluster and items are found, find minimum warehouse visits for drone
+### warehouses should be sorted by distance to order
+### 
+## drone delivers items in order in which it's stored in hold
 # demand distribution map should match supply distribution map
