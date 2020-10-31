@@ -1,5 +1,8 @@
 import math
+import random
 from collections import Counter
+
+random.seed(1)
 
 ##### DATA PARSING #####
 def get_layout(data):
@@ -80,15 +83,19 @@ class Drone():
   def set_availability(self, availablity):
     self.available = availablity
 
-  def load_item(self, product, quantity):
+  def load_item(self, order_product, quantity):
     for _ in range(quantity):
-      self.hold.append(product)
+      self.hold.append(order_product)
     self.busy_turns += 1
     self.set_availability(False)
 
-  def unload_item(self, product, quantity):
+  def unload_item(self, order_product, quantity):
     for _ in range(quantity):
-      self.hold.pop(self.hold.index(product))
+      matching_idx = 0
+      for idx in range(len(self.hold)):
+        if order_product['product'] == self.hold[idx]['product']:
+          matching_idx = idx
+      self.hold.pop(matching_idx)
     self.busy_turns += 1
     self.set_availability(False)
 
@@ -121,14 +128,20 @@ class Order():
     self.id = data['id']
     self.coordinates = data['coordinates']
     self.products = sorted(data['products'])
+    self.processing_products = []
     self.fulfilled_products = []
     self.completed = False
+  
+  def process_order(self, product, quantity):
+    for _ in range(quantity):
+      self.products.pop(self.products.index(product))
+      self.processing_products.append(product)
 
   def fulfill_order(self, product, quantity):
     for _ in range(quantity):
-      self.products.pop(self.products.index(product))
+      self.processing_products.pop(self.processing_products.index(product))
       self.fulfilled_products.append(product)
-    if len(self.products) == 0:
+    if len(self.products) == 0 and len(self.processing_products) == 0:
       self.completed = True
 
 class Simulation():
@@ -137,6 +150,7 @@ class Simulation():
     drone_initial_coordinates = data['warehouses'][0]['coordinates']
     drone_initial_count = data['drones']
     all_warehouse_data = data['warehouses']
+    self.xy = (data['rows'], data['columns'])
     self.drones = [Drone(drone_id, drone_initial_coordinates)
                    for drone_id in range(drone_initial_count)]
     self.warehouses = [Warehouse(warehouse_data)
@@ -173,74 +187,122 @@ def available_drones_by_distance(sim, coor):
     calculate_distance(drone.coordinates, coor)
   )
 
-def load_drone(sim, drone, warehouse, product, quantity):
+def load_drone(sim, drone, warehouse, order_product, quantity):
+  product = order_product['product']
   drone.set_coordinates(warehouse.coordinates)
-  drone.load_item(product, quantity)
+  drone.load_item(order_product, quantity)
   warehouse.export_item(product, quantity)
   sim.record(f'{drone.id} L {warehouse.id} {product} {quantity}')
 
-def drone_delivery(sim, drone, order):
-  drone.set_coordinates(order.coordinates)
-  for item, quantity in Counter(drone.hold).items():
-    drone.unload_item(item, quantity)
-    order.fulfill_order(item, quantity)
-    sim.record(f'{drone.id} D {order.id} {item} {quantity}')
+def drone_delivery(sim, drone):
+  for order_product in drone.hold[:]:
+    order = order_product['order']
+    product = order_product['product']
+    drone.set_coordinates(order.coordinates)
+    quantity = 1
+    drone.unload_item(order_product, quantity)
+    order.fulfill_order(product, quantity)
+    sim.record(f'{drone.id} D {order.id} {product} {quantity}')
 
-def package_order(sim, order):
-  packages = []
-  bundle = []
-  weight_capacity = sim.max_payload
-  products = order.products[:]
-  while len(products) > 0:
-    if all([
-      weight_capacity - sim.product_weights[item] < 0 
-      for item in products
-    ]):
-      packages.append(bundle)
-      bundle = []
-      weight_capacity = sim.max_payload
-    for item in products:
-      product_weight = sim.product_weights[item]
-      if weight_capacity - product_weight >= 0:
-        bundle.append(item)
-        weight_capacity = weight_capacity - product_weight
-        products.pop(products.index(item))
-  if len(bundle) > 0:
-    packages.append(bundle)
-  
-  return packages
-
-def find_closest_warehouse_with_product(sim, order, item):
+def find_closest_warehouse_with_product(sim, coordinates, item):
   warehouse_availability = []
   for warehouse in sim.warehouses:
     if warehouse.inventory[item] > 0:
       warehouse_availability.append(warehouse)
 
   warehouse_availability.sort(
-    key=lambda warehouse: 
-    calculate_distance(order.coordinates, warehouse.coordinates)
+      key=lambda warehouse:
+      calculate_distance(coordinates, warehouse.coordinates)
   )
 
   return warehouse_availability[0]
 
-def process_order(sim, order):
-  packages = package_order(sim, order)
-  # print(packages)
-  assigned_drones = []
-  for bundle in packages:
-    drones = available_drones_by_distance(sim, order.coordinates)
-    if len(drones) == 0:
+def pool_orders(pending_orders, quantity):
+  pool = []
+  for order in pending_orders:
+    for product in order.products:
+      pool.append({
+        'order': order,
+        'product': product,
+      })
+    if len(pool) >= quantity:
       break
-    else:
-      drone = drones[0]
-      assigned_drones.append(drone)
-    
-    for product in bundle:
-      warehouse = find_closest_warehouse_with_product(sim, order, product)
-      load_drone(sim, drone, warehouse, product, 1)
+  return pool
 
+def find_order_cluster(sim, order_pool, sample_size):
+  results = []
+  for _ in range(sample_size):
+    random_coor = (random.randrange(sim.xy[0]), random.randrange(sim.xy[1]))
+    order_pool_distances = []
+    for order_product in order_pool:
+      order_pool_distances.append({
+        **order_product,
+        'distance': calculate_distance(
+          random_coor, 
+          order_product['order'].coordinates
+        )
+      })
+    order_pool_distances.sort(key=lambda item:item['distance'])
+    
+    order_pool_selection = []
+    weight_capacity = sim.max_payload
+    for order_product in order_pool_distances:
+      # print('order pool selection', order_pool_selection)
+      product = order_product['product']
+      product_weight = sim.product_weights[product]
+      if weight_capacity - product_weight < 0:
+        break
+      else:
+        order_pool_selection.append(order_product)
+        weight_capacity = weight_capacity - product_weight
+      
+    results.append(order_pool_selection)
+
+  results.sort(
+    key=lambda result:
+    sum([
+      sim.product_weights[order_product['product']] 
+      for order_product in result
+    ]) /
+    ((sum([
+      order_product['distance'] 
+      for order_product in result
+    ]) / len(result)) + 1)
+  )
+
+  return [
+    {
+      'order': order_product['order'], 
+      'product': order_product['product']
+    } for order_product in results[-1]
+  ]
+
+
+def process_orders(sim, pending_orders):
+  assigned_drones = available_drones(sim)
   for drone in assigned_drones:
-    drone_delivery(sim, drone, order)
+    order_pool = pool_orders(pending_orders, 100)
+    # print('orderpool', [order['product'] for order in order_pool])
+    if len(order_pool) == 0:
+      break
+    order_cluster = find_order_cluster(sim, order_pool, 30)
+    # print('ordercluster', order_cluster)
+    for order_product in order_cluster:
+      order = order_product['order']
+      product = order_product['product']
+      order.process_order(product, 1)
+      
+      warehouse = find_closest_warehouse_with_product(
+        sim, 
+        order.coordinates, 
+        product
+      )
+      
+      load_drone(sim, drone, warehouse, order_product, 1)
+  
+  for drone in assigned_drones:
+    drone_delivery(sim, drone)
+
 
 ################ Data loading
 data = parse_file('busy_day.in')
@@ -250,6 +312,9 @@ sim = Simulation('busy_day.in')
 orders = [Order(order) for order in data['orders']]
 orders = sorted(orders, key=lambda order: len(order.products))
 
+# for order in orders:
+#   print(order.coordinates, order.products)
+
 for i in range(data['turns']):
   pending_orders = [
     order for order in orders
@@ -257,7 +322,7 @@ for i in range(data['turns']):
   ]
   if len(pending_orders) > 0:
       if len(available_drones(sim)) > 0:
-        process_order(sim, pending_orders[0])
+        process_orders(sim, pending_orders)
   sim.next_turn()
 
 print(len(sim.history))
