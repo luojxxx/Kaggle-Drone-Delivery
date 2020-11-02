@@ -2,7 +2,6 @@ import math
 import random
 from collections import Counter
 from itertools import permutations
-from functools import reduce
 
 random.seed(1)
 
@@ -85,17 +84,17 @@ class Drone():
   def set_availability(self, availablity):
     self.available = availablity
 
-  def load_item(self, order_product, quantity):
+  def load_item(self, product_order, quantity):
     for _ in range(quantity):
-      self.hold.append(order_product)
+      self.hold.append(product_order)
     self.busy_turns += 1
     self.set_availability(False)
 
-  def unload_item(self, order_product, quantity):
+  def unload_item(self, product_order, quantity):
     for _ in range(quantity):
       matching_idx = 0
       for idx in range(len(self.hold)):
-        if order_product['product'] == self.hold[idx]['product']:
+        if product_order['product'] == self.hold[idx]['product']:
           matching_idx = idx
       self.hold.pop(matching_idx)
     self.busy_turns += 1
@@ -189,7 +188,7 @@ def available_drones_by_distance(sim, coor):
     calculate_distance(drone.coordinates, coor)
   )
 
-def pool_orders(pending_orders, quantity):
+def pool_orders(pending_orders, pool_size):
   pool = []
   for order in pending_orders:
     for product in order.products:
@@ -197,7 +196,7 @@ def pool_orders(pending_orders, quantity):
         'order': order,
         'product': product,
       })
-    if len(pool) >= quantity:
+    if len(pool) >= pool_size:
       break
   return pool
 
@@ -206,25 +205,25 @@ def find_order_cluster(sim, order_pool, sample_size):
   for _ in range(sample_size):
     random_coor = (random.randrange(sim.xy[0]), random.randrange(sim.xy[1]))
     order_pool_distances = []
-    for order_product in order_pool:
+    for product_order in order_pool:
       order_pool_distances.append({
-        **order_product,
+        **product_order,
         'distance': calculate_distance(
           random_coor, 
-          order_product['order'].coordinates
+          product_order['order'].coordinates
         )
       })
     order_pool_distances.sort(key=lambda item:item['distance'])
     
     order_pool_selection = []
     weight_capacity = sim.max_payload
-    for order_product in order_pool_distances:
-      product = order_product['product']
+    for product_order in order_pool_distances:
+      product = product_order['product']
       product_weight = sim.product_weights[product]
       if weight_capacity - product_weight < 0:
         break
       else:
-        order_pool_selection.append(order_product)
+        order_pool_selection.append(product_order)
         weight_capacity = weight_capacity - product_weight
       
     results.append(order_pool_selection)
@@ -232,20 +231,20 @@ def find_order_cluster(sim, order_pool, sample_size):
   results.sort(
     key=lambda result:
     sum([
-      sim.product_weights[order_product['product']] 
-      for order_product in result
+      sim.product_weights[product_order['product']] 
+      for product_order in result
     ]) / (1 + (
     sum([
-      order_product['distance'] 
-      for order_product in result
+      product_order['distance'] 
+      for product_order in result
     ]) / len(result)))
   )
 
   return [
     {
-      'order': order_product['order'], 
-      'product': order_product['product']
-    } for order_product in results[-1]
+      'order': product_order['order'], 
+      'product': product_order['product']
+    } for product_order in results[-1]
   ]
 
 def find_closest_warehouse_with_product(sim, coordinates, item):
@@ -261,28 +260,39 @@ def find_closest_warehouse_with_product(sim, coordinates, item):
 
   return warehouse_availability[0]
 
-def load_drone(sim, drone, warehouse, order_product, quantity):
-  product = order_product['product']
+def load_drone(sim, drone, warehouse, product_order, quantity):
   drone.set_coordinates(warehouse.coordinates)
-  drone.load_item(order_product, quantity)
+  drone.load_item(product_order, quantity)
+  product = product_order['product']
   warehouse.export_item(product, quantity)
   sim.record(f'{drone.id} L {warehouse.id} {product} {quantity}')
 
-# def optimize_drone_manifest(manifest):
-#   delivery_routes = list(permutations([i for i in range(len(manifest))]))
-#   best_delivery_route = []
-#   best_delivery_route_distance = 9999999999999
-#   for route in delivery_routes:
-
+def optimize_drone_manifest(manifest):
+  delivery_routes = list(permutations([i for i in range(len(manifest))]))
+  best_delivery_route = []
+  best_delivery_route_distance = 9999999999999
+  for route in delivery_routes:
+    product_orders = [manifest[i] for i in route]
+    total_distance = 0
+    for idx in range(len(product_orders) - 1):
+      first = product_orders[idx]
+      second = product_orders[idx + 1]
+      total_distance += calculate_distance(
+        first['order'].coordinates, 
+        second['order'].coordinates
+      )
+    if total_distance < best_delivery_route_distance:
+      best_delivery_route = product_orders
+  return best_delivery_route
 
 def drone_delivery(sim, drone):
   drone_manifest = optimize_drone_manifest(drone.hold.copy())
-  for order_product in drone_manifest:
-    order = order_product['order']
-    product = order_product['product']
+  for product_order in drone_manifest:
+    order = product_order['order']
+    product = product_order['product']
     drone.set_coordinates(order.coordinates)
     quantity = 1
-    drone.unload_item(order_product, quantity)
+    drone.unload_item(product_order, quantity)
     order.fulfill_order(product, quantity)
     sim.record(f'{drone.id} D {order.id} {product} {quantity}')
 
@@ -293,9 +303,9 @@ def process_orders(sim, pending_orders):
     if len(order_pool) == 0:
       break
     order_cluster = find_order_cluster(sim, order_pool, 30)
-    for order_product in order_cluster:
-      order = order_product['order']
-      product = order_product['product']
+    for product_order in order_cluster:
+      order = product_order['order']
+      product = product_order['product']
       order.process_order(product, 1)
       
       warehouse = find_closest_warehouse_with_product(
@@ -304,7 +314,7 @@ def process_orders(sim, pending_orders):
         product
       )
       
-      load_drone(sim, drone, warehouse, order_product, 1)
+      load_drone(sim, drone, warehouse, product_order, 1)
   
   for drone in assigned_drones:
     drone_delivery(sim, drone)
