@@ -325,7 +325,7 @@ data = parse_file('busy_day.in')
 sim = Simulation('busy_day.in')
 
 ################ Execution code
-orders = [Order(order) for order in data['orders'][0:5]]
+orders = [Order(order) for order in data['orders']]
 orders = sorted(orders, key=lambda order: len(order.products))
 
 # for order in orders:
@@ -337,8 +337,8 @@ for i in range(data['turns']):
     if order.completed == False
   ]
   if len(pending_orders) > 0:
-      if len(available_drones(sim)) > 0:
-        process_orders(sim, pending_orders)
+    if len(available_drones(sim)) > 0:
+      process_orders(sim, pending_orders)
   sim.next_turn()
 
 print(len(sim.history))
