@@ -1,5 +1,9 @@
 import math
+import random
 from collections import Counter
+from itertools import permutations
+
+random.seed(1)
 
 ##### DATA PARSING #####
 def get_layout(data):
@@ -80,15 +84,19 @@ class Drone():
   def set_availability(self, availablity):
     self.available = availablity
 
-  def load_item(self, product, quantity):
+  def load_item(self, product_order, quantity):
     for _ in range(quantity):
-      self.hold.append(product)
+      self.hold.append(product_order)
     self.busy_turns += 1
     self.set_availability(False)
 
-  def unload_item(self, product, quantity):
+  def unload_item(self, product_order, quantity):
     for _ in range(quantity):
-      self.hold.pop(self.hold.index(product))
+      matching_idx = 0
+      for idx in range(len(self.hold)):
+        if product_order['product'] == self.hold[idx]['product']:
+          matching_idx = idx
+      self.hold.pop(matching_idx)
     self.busy_turns += 1
     self.set_availability(False)
 
@@ -121,14 +129,20 @@ class Order():
     self.id = data['id']
     self.coordinates = data['coordinates']
     self.products = sorted(data['products'])
+    self.processing_products = []
     self.fulfilled_products = []
     self.completed = False
+  
+  def process_order(self, product, quantity):
+    for _ in range(quantity):
+      self.products.remove(product)
+      self.processing_products.append(product)
 
   def fulfill_order(self, product, quantity):
     for _ in range(quantity):
-      self.products.pop(self.products.index(product))
+      self.processing_products.remove(product)
       self.fulfilled_products.append(product)
-    if len(self.products) == 0:
+    if len(self.products) == 0 and len(self.processing_products) == 0:
       self.completed = True
 
 class Simulation():
@@ -137,6 +151,7 @@ class Simulation():
     drone_initial_coordinates = data['warehouses'][0]['coordinates']
     drone_initial_count = data['drones']
     all_warehouse_data = data['warehouses']
+    self.xy = (data['rows'], data['columns'])
     self.drones = [Drone(drone_id, drone_initial_coordinates)
                    for drone_id in range(drone_initial_count)]
     self.warehouses = [Warehouse(warehouse_data)
@@ -173,74 +188,137 @@ def available_drones_by_distance(sim, coor):
     calculate_distance(drone.coordinates, coor)
   )
 
-def load_drone(sim, drone, warehouse, product, quantity):
-  drone.set_coordinates(warehouse.coordinates)
-  drone.load_item(product, quantity)
-  warehouse.export_item(product, quantity)
-  sim.record(f'{drone.id} L {warehouse.id} {product} {quantity}')
+def pool_orders(pending_orders, pool_size):
+  pool = []
+  for order in pending_orders:
+    for product in order.products:
+      pool.append({
+        'order': order,
+        'product': product,
+      })
+    if len(pool) >= pool_size:
+      break
+  return pool
 
-def drone_delivery(sim, drone, order):
-  drone.set_coordinates(order.coordinates)
-  for item, quantity in Counter(drone.hold).items():
-    drone.unload_item(item, quantity)
-    order.fulfill_order(item, quantity)
-    sim.record(f'{drone.id} D {order.id} {item} {quantity}')
-
-def package_order(sim, order):
-  packages = []
-  bundle = []
-  weight_capacity = sim.max_payload
-  products = order.products[:]
-  while len(products) > 0:
-    if all([
-      weight_capacity - sim.product_weights[item] < 0 
-      for item in products
-    ]):
-      packages.append(bundle)
-      bundle = []
-      weight_capacity = sim.max_payload
-    for item in products:
-      product_weight = sim.product_weights[item]
-      if weight_capacity - product_weight >= 0:
-        bundle.append(item)
+def find_order_cluster(sim, order_pool, sample_size):
+  results = []
+  for _ in range(sample_size):
+    random_coor = (random.randrange(sim.xy[0]), random.randrange(sim.xy[1]))
+    order_pool_distances = []
+    for product_order in order_pool:
+      order_pool_distances.append({
+        **product_order,
+        'distance': calculate_distance(
+          random_coor, 
+          product_order['order'].coordinates
+        )
+      })
+    order_pool_distances.sort(key=lambda item:item['distance'])
+    
+    order_pool_selection = []
+    weight_capacity = sim.max_payload
+    for product_order in order_pool_distances:
+      product = product_order['product']
+      product_weight = sim.product_weights[product]
+      if weight_capacity - product_weight < 0:
+        break
+      else:
+        order_pool_selection.append(product_order)
         weight_capacity = weight_capacity - product_weight
-        products.pop(products.index(item))
-  if len(bundle) > 0:
-    packages.append(bundle)
-  
-  return packages
+      
+    results.append(order_pool_selection)
 
-def find_closest_warehouse_with_product(sim, order, item):
+  results.sort(
+    key=lambda result:
+    sum([
+      sim.product_weights[product_order['product']] 
+      for product_order in result
+    ]) / (1 + (
+    sum([
+      product_order['distance'] 
+      for product_order in result
+    ]) / len(result)))
+  )
+
+  return [
+    {
+      'order': product_order['order'], 
+      'product': product_order['product']
+    } for product_order in results[-1]
+  ]
+
+def find_closest_warehouse_with_product(sim, coordinates, item):
   warehouse_availability = []
   for warehouse in sim.warehouses:
     if warehouse.inventory[item] > 0:
       warehouse_availability.append(warehouse)
 
   warehouse_availability.sort(
-    key=lambda warehouse: 
-    calculate_distance(order.coordinates, warehouse.coordinates)
+      key=lambda warehouse:
+      calculate_distance(coordinates, warehouse.coordinates)
   )
 
   return warehouse_availability[0]
 
-def process_order(sim, order):
-  packages = package_order(sim, order)
-  # print(packages)
-  assigned_drones = []
-  for bundle in packages:
-    drones = available_drones_by_distance(sim, order.coordinates)
-    if len(drones) == 0:
-      break
-    else:
-      drone = drones[0]
-      assigned_drones.append(drone)
-    
-    for product in bundle:
-      warehouse = find_closest_warehouse_with_product(sim, order, product)
-      load_drone(sim, drone, warehouse, product, 1)
+def load_drone(sim, drone, warehouse, product_order, quantity):
+  drone.set_coordinates(warehouse.coordinates)
+  drone.load_item(product_order, quantity)
+  product = product_order['product']
+  warehouse.export_item(product, quantity)
+  sim.record(f'{drone.id} L {warehouse.id} {product} {quantity}')
 
+def optimize_drone_manifest(manifest):
+  delivery_routes = list(permutations([i for i in range(len(manifest))]))
+  best_delivery_route = []
+  best_delivery_route_distance = 9999999999999
+  for route in delivery_routes:
+    product_orders = [manifest[i] for i in route]
+    total_distance = 0
+    for idx in range(len(product_orders) - 1):
+      first = product_orders[idx]
+      second = product_orders[idx + 1]
+      total_distance += calculate_distance(
+        first['order'].coordinates, 
+        second['order'].coordinates
+      )
+    if total_distance < best_delivery_route_distance:
+      best_delivery_route = product_orders
+  return best_delivery_route
+
+def drone_delivery(sim, drone):
+  drone_manifest = optimize_drone_manifest(drone.hold.copy())
+  for product_order in drone_manifest:
+    order = product_order['order']
+    product = product_order['product']
+    drone.set_coordinates(order.coordinates)
+    quantity = 1
+    drone.unload_item(product_order, quantity)
+    order.fulfill_order(product, quantity)
+    sim.record(f'{drone.id} D {order.id} {product} {quantity}')
+
+def process_orders(sim, pending_orders):
+  assigned_drones = available_drones(sim)
   for drone in assigned_drones:
-    drone_delivery(sim, drone, order)
+    order_pool = pool_orders(pending_orders, 100)
+    if len(order_pool) == 0:
+      break
+    order_cluster = find_order_cluster(sim, order_pool, 30)
+    for product_order in order_cluster:
+      order = product_order['order']
+      product = product_order['product']
+      order.process_order(product, 1)
+      
+      warehouse = find_closest_warehouse_with_product(
+        sim, 
+        order.coordinates, 
+        product
+      )
+      
+      load_drone(sim, drone, warehouse, product_order, 1)
+  
+  for drone in assigned_drones:
+    drone_delivery(sim, drone)
+
 
 ################ Data loading
 data = parse_file('busy_day.in')
@@ -250,14 +328,17 @@ sim = Simulation('busy_day.in')
 orders = [Order(order) for order in data['orders']]
 orders = sorted(orders, key=lambda order: len(order.products))
 
+# for order in orders:
+#   print(order.coordinates, order.products)
+
 for i in range(data['turns']):
   pending_orders = [
     order for order in orders
     if order.completed == False
   ]
   if len(pending_orders) > 0:
-      if len(available_drones(sim)) > 0:
-        process_order(sim, pending_orders[0])
+    if len(available_drones(sim)) > 0:
+      process_orders(sim, pending_orders)
   sim.next_turn()
 
 print(len(sim.history))
@@ -274,5 +355,20 @@ sim.writeout_history()
 # group some orders together such as running 20 pending orders (to reduce computational load), 
 ## calculate best single route to maximize score with available drone, 
 ## calculate next best route, etc
-## maximum score is moving most product with shortest distance
+## maximum score is moving most product with shortest distances
+## need to balance the warehouse spread with delivery spread
+## represent items as array of id-item-order
+## identify cluster between nodes using stochasitic method, nodes are id-item-orders
+### find minimal distance between random point and id-item-orders
+### sorting id-item-orders by distance, add items up to weight limit. 
+### calculate average distance of added items
+### pick maximum payload_weight/average_distance among random points
+### the selected items around this point is the cluster
+## once cluster and items are found, find minimum warehouse visits for drone
+### keep track of best route, if current route exceeds it, give up on route
+### find centroid between order and first closest warehouse for first item
+### then find closest warehouse for next item based on centroid
+## iterate through every possible order of warehouses or deliveries
+### find route with shortest total distance
+## drone delivers items in order in which it's stored in hold
 # demand distribution map should match supply distribution map
