@@ -305,6 +305,42 @@ def find_warehouses_for_product_orders(sim, product_orders):
     return warehouse_product_orders
 
 
+def optimize_drone_route(sim, warehouse_product_orders):
+    routes = list(permutations(
+        [i for i in range(len(warehouse_product_orders))]))
+    best_route = {}
+    best_route_distance = 9999999999999
+    for warehouse_route in routes:
+        for delivery_route in routes:
+            warehouses = [
+                sim.warehouses[warehouse_product_orders[i]['warehouse_id']]
+                for i in warehouse_route
+            ]
+            product_orders = [
+                warehouse_product_orders[i]['order']
+                for i in delivery_route
+            ]
+
+            all_stops = warehouses + product_orders
+            total_distance = 0
+            for idx in range(len(all_stops) - 1):
+                first = all_stops[idx]
+                second = all_stops[idx + 1]
+                total_distance += calculate_distance(
+                    first.coordinates,
+                    second.coordinates
+                )
+
+            if total_distance < best_route_distance:
+                best_route = {
+                    'warehouse_route': warehouse_route,
+                    'delivery_route': delivery_route,
+                }
+                best_route_distance = total_distance
+
+    return best_route
+
+
 def load_drone(sim, drone, warehouse, product_order, quantity):
     drone.set_coordinates(warehouse.coordinates)
     drone.load_item(product_order, quantity)
@@ -313,35 +349,30 @@ def load_drone(sim, drone, warehouse, product_order, quantity):
     sim.record(f'{drone.id} L {warehouse.id} {product} {quantity}')
 
 
-def optimize_drone_manifest(manifest):
-    delivery_routes = list(permutations([i for i in range(len(manifest))]))
-    best_delivery_route = []
-    best_delivery_route_distance = 9999999999999
-    for route in delivery_routes:
-        product_orders = [manifest[i] for i in route]
-        total_distance = 0
-        for idx in range(len(product_orders) - 1):
-            first = product_orders[idx]
-            second = product_orders[idx + 1]
-            total_distance += calculate_distance(
-                first['order'].coordinates,
-                second['order'].coordinates
-            )
-        if total_distance < best_delivery_route_distance:
-            best_delivery_route = product_orders
-    return best_delivery_route
+def drone_delivery(sim, drone, product_order):
+    order = product_order['order']
+    product = product_order['product']
+    drone.set_coordinates(order.coordinates)
+    quantity = 1
+    drone.unload_item(product_order, quantity)
+    order.fulfill_order(product, quantity)
+    sim.record(f'{drone.id} D {order.id} {product} {quantity}')
 
 
-def drone_delivery(sim, drone):
-    drone_manifest = optimize_drone_manifest(drone.hold.copy())
-    for product_order in drone_manifest:
-        order = product_order['order']
-        product = product_order['product']
-        drone.set_coordinates(order.coordinates)
-        quantity = 1
-        drone.unload_item(product_order, quantity)
-        order.fulfill_order(product, quantity)
-        sim.record(f'{drone.id} D {order.id} {product} {quantity}')
+def route_drone(sim, drone, warehouse_product_orders):
+    drone_route = optimize_drone_route(sim, warehouse_product_orders)
+    warehouse_route = drone_route['warehouse_route']
+    delivery_route = drone_route['delivery_route']
+
+    for pickup in warehouse_route:
+        warehouse = sim.warehouses[warehouse_product_orders[pickup]
+                                   ['warehouse_id']]
+        product_order = warehouse_product_orders[pickup]
+        load_drone(sim, drone, warehouse, product_order, 1)
+
+    for dropoff in delivery_route:
+        product_order = warehouse_product_orders[dropoff]
+        drone_delivery(sim, drone, product_order)
 
 
 def process_orders(sim, pending_orders):
@@ -352,18 +383,10 @@ def process_orders(sim, pending_orders):
             break
         order_cluster = find_order_cluster(sim, order_pool, 30)
         warehouse_product_orders = find_warehouses_for_product_orders(
-            sim, order_cluster)
-
-        for warehouse_product_order in warehouse_product_orders:
-            warehouse = sim.warehouses[warehouse_product_order['warehouse_id']]
-            product_order = {
-                'product': warehouse_product_order['product'],
-                'order': warehouse_product_order['order'],
-            }
-            load_drone(sim, drone, warehouse, product_order, 1)
-
-    for drone in assigned_drones:
-        drone_delivery(sim, drone)
+            sim,
+            order_cluster
+        )
+        route_drone(sim, drone, warehouse_product_orders)
 
 
 ##### DATA LOADING #####
