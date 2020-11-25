@@ -416,31 +416,3 @@ for i in range(data['turns']):
 print(len(sim.history))
 print(sim.history)
 sim.writeout_history()
-
-# find closest warehouses to the order products, then bundle, then drones
-# do short easy orders first
-# packing efficency
-# order in which the warehouses are visited per bundle ending towards order's coordinates
-# write validator to find optimized parameters or just use total drone commands as proxy
-
-# optimize globally across multiple orders
-# group some orders together such as running 20 pending orders (to reduce computational load),
-# calculate best single route to maximize score with available drone,
-# calculate next best route, etc
-# maximum score is moving most product with shortest distances
-# need to balance the warehouse spread with delivery spread
-# represent items as array of id-item-order
-# identify cluster between nodes using stochasitic method, nodes are id-item-orders
-# find minimal distance between random point and id-item-orders
-# sorting id-item-orders by distance, add items up to weight limit.
-# calculate average distance of added items
-# pick maximum payload_weight/average_distance among random points
-# the selected items around this point is the cluster
-# once cluster and items are found, find minimum warehouse visits for drone
-# keep track of best route, if current route exceeds it, give up on route
-# find centroid between order and first closest warehouse for first item
-# then find closest warehouse for next item based on centroid
-# iterate through every possible order of warehouses or deliveries
-# find route with shortest total distance
-# drone delivers items in order in which it's stored in hold
-# demand distribution map should match supply distribution map
